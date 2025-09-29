@@ -2,55 +2,97 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Palm AI Controller</title>
+  <title>Gesture Control - Mini Robot</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
   <style>
-    body { text-align: center; background: #000; color: #fff; font-family: sans-serif; }
+    body {
+      margin: 0; font-family: 'Poppins', sans-serif;
+      background: linear-gradient(135deg, #e3f2fd, #ffffff);
+      text-align: center; color: #333;
+    }
     video { transform: scaleX(-1); width: 90%; border-radius: 10px; margin-top: 10px; }
-    h2 { color: #00ffaa; }
+    h2 { color: #1565C0; margin-top: 12px; }
+    .status { margin-top: 10px; font-size: 18px; font-weight: 500; color:#1565C0; }
+    .debug { font-size: 14px; color: #777; margin-top: 6px; }
   </style>
 </head>
 <body>
-  <h2>🤖 Palm Follow Me</h2>
+  <h2>🤖 Mini Robot Gesture Control</h2>
   <video id="video" autoplay playsinline></video>
-  <p id="status">Waiting for palm...</p>
+  <p class="status" id="status">Waiting for gesture...</p>
+  <p class="debug" id="debug">Gesture: --</p>
 
   <script>
-    const ESP_URL = "http://172.20.10.5"; // ESP32 Robot IP
+    const ESP_URL = "http://172.20.10.5"; // ⚠️ Replace with your ESP32 IP
     let lastCmd = "", lastTime = 0;
+    const sendDelay = 600; // ms between commands
 
     async function sendCmd(cmd) {
-      if (cmd !== lastCmd && Date.now() - lastTime > 500) {
+      if (cmd !== lastCmd && Date.now() - lastTime > sendDelay) {
         lastCmd = cmd; lastTime = Date.now();
-        document.getElementById('status').innerText = 'Command: ' + cmd;
-        try { await fetch(`${ESP_URL}/${cmd}`); } catch (e) { console.log(e); }
+        document.getElementById('status').innerText = "Command: " + cmd;
+        try { await fetch(`${ESP_URL}/${cmd}`); }
+        catch (e) { console.log("❌ Fetch error:", e); }
       }
     }
 
+    function fingerExtended(tip, dip) {
+      return tip.y < dip.y; // if fingertip above DIP joint
+    }
+
+    function detectGesture(hand) {
+      const index = fingerExtended(hand[8], hand[6]);
+      const middle = fingerExtended(hand[12], hand[10]);
+      const ring = fingerExtended(hand[16], hand[14]);
+      const pinky = fingerExtended(hand[20], hand[18]);
+      const thumb = hand[4].x < hand[3].x; // simple thumb check
+      const x = hand[0].x;
+
+      // 🖐 All fingers extended → STOP
+      if (index && middle && ring && pinky) return 'stop';
+
+      // ✊ Fist (no finger extended) → FORWARD
+      if (!index && !middle && !ring && !pinky) return 'forward';
+
+      // ✌️ Two fingers (index + middle) → BACKWARD
+      if (index && middle && !ring && !pinky) return 'backward';
+
+      // 👉 Left tilt
+      if (x < 0.35) return 'left';
+
+      // 👈 Right tilt
+      if (x > 0.65) return 'right';
+
+      return 'stop';
+    }
+
     const video = document.getElementById('video');
-    const hands = new Hands({locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
-    hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.5});
+    const hands = new Hands({ locateFile: f =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.6
+    });
 
     hands.onResults(res => {
       if (!res.multiHandLandmarks || res.multiHandLandmarks.length === 0) {
-        sendCmd('stop'); return;
+        sendCmd('stop');
+        document.getElementById('debug').innerText = "Gesture: --";
+        return;
       }
       const hand = res.multiHandLandmarks[0];
-      const palm = hand[0], finger = hand[9];
-      const dx = Math.abs(palm.x - finger.x);
-      const x = palm.x, size = 1 / dx;
-
-      if (x < 0.3) sendCmd('left');
-      else if (x > 0.7) sendCmd('right');
-      else if (size < 3) sendCmd('forward');
-      else if (size > 5) sendCmd('backward');
-      else sendCmd('stop');
+      const gesture = detectGesture(hand);
+      document.getElementById('debug').innerText = "Gesture: " + gesture;
+      sendCmd(gesture);
     });
 
     const camera = new Camera(video, {
-      onFrame: async () => { await hands.send({image: video}); },
+      onFrame: async () => { await hands.send({ image: video }); },
       width: 640, height: 480
     });
     camera.start();
