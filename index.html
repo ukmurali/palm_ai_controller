@@ -2,44 +2,118 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Gesture Control - Mini Robot</title>
+  <title>Mini Robot Palm Follow</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Mediapipe -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
   <style>
     body {
-      margin: 0; font-family: 'Poppins', sans-serif;
-      background: linear-gradient(135deg, #e3f2fd, #ffffff);
-      text-align: center; color: #333;
+      margin: 0;
+      font-family: 'Poppins', sans-serif;
+      background: linear-gradient(135deg, #121212, #1f1f1f);
+      color: #e0e0e0;
+      text-align: center;
     }
-    video { transform: scaleX(-1); width: 90%; border-radius: 10px; margin-top: 10px; }
-    h2 { color: #1565C0; margin-top: 12px; }
-    .status { margin-top: 10px; font-size: 18px; font-weight: 500; color:#1565C0; }
-    .debug { font-size: 14px; color: #777; margin-top: 6px; }
+    h2 {
+      color: #90caf9;
+      margin: 12px 0;
+      font-weight: 600;
+    }
+    video {
+      transform: scaleX(-1);
+      width: 90%;
+      border-radius: 12px;
+      margin-top: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+    }
+    .status {
+      margin-top: 10px;
+      font-size: 18px;
+      font-weight: 500;
+      color: #90caf9;
+    }
+    .debug {
+      font-size: 14px;
+      color: #bbb;
+      margin-top: 6px;
+    }
+    .direction {
+      margin-top: 18px;
+      font-size: 34px;
+      font-weight: bold;
+      transition: all 0.3s ease;
+    }
+    .led {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-left: 10px;
+      border: 2px solid #333;
+      vertical-align: middle;
+      box-shadow: 0 0 10px rgba(255,255,255,0.2);
+    }
   </style>
 </head>
 <body>
-  <h2>🤖 Mini Robot Gesture Control</h2>
+  <h2>🖐 Mini Robot Gesture Control</h2>
   <video id="video" autoplay playsinline></video>
-  <p class="status" id="status">Waiting for gesture...</p>
+  <p class="status">Command: <span id="status">STOP</span> <span id="led" class="led" style="background:#444;"></span></p>
   <p class="debug" id="debug">Gesture: --</p>
+  <div id="direction" class="direction">🛑 STOP</div>
 
   <script>
-    const ESP_URL = "http://172.20.10.5"; // ⚠️ Replace with your ESP32 IP
+    const ESP_URL = "http://172.20.10.5"; // ⚠️ replace with your ESP32 IP
     let lastCmd = "", lastTime = 0;
-    const sendDelay = 600; // ms between commands
+    const sendDelay = 500;
+
+    const dirEl = document.getElementById("direction");
+    const statusEl = document.getElementById("status");
+    const ledEl = document.getElementById("led");
+    const debugEl = document.getElementById("debug");
 
     async function sendCmd(cmd) {
       if (cmd !== lastCmd && Date.now() - lastTime > sendDelay) {
         lastCmd = cmd; lastTime = Date.now();
-        document.getElementById('status').innerText = "Command: " + cmd;
-        try { await fetch(`${ESP_URL}/${cmd}`); }
-        catch (e) { console.log("❌ Fetch error:", e); }
+        updateUI(cmd);
+        try {
+          await fetch(`${ESP_URL}/${cmd}`);
+        } catch (e) {
+          console.log("❌ Fetch error:", e);
+        }
+      }
+    }
+
+    function updateUI(cmd) {
+      statusEl.innerText = cmd.toUpperCase();
+      switch (cmd) {
+        case "forward":
+          dirEl.innerText = "🚀 FORWARD";
+          ledEl.style.background = "#00e676"; // green
+          break;
+        case "backward":
+          dirEl.innerText = "🔙 BACKWARD";
+          ledEl.style.background = "#ffeb3b"; // yellow
+          break;
+        case "left":
+          dirEl.innerText = "↩️ LEFT";
+          ledEl.style.background = "#42a5f5"; // blue
+          break;
+        case "right":
+          dirEl.innerText = "↪️ RIGHT";
+          ledEl.style.background = "#42a5f5"; // blue
+          break;
+        default:
+          dirEl.innerText = "🛑 STOP";
+          ledEl.style.background = "#ef5350"; // red
       }
     }
 
     function fingerExtended(tip, dip) {
-      return tip.y < dip.y; // if fingertip above DIP joint
+      return tip.y < dip.y;
     }
 
     function detectGesture(hand) {
@@ -47,30 +121,23 @@
       const middle = fingerExtended(hand[12], hand[10]);
       const ring = fingerExtended(hand[16], hand[14]);
       const pinky = fingerExtended(hand[20], hand[18]);
-      const thumb = hand[4].x < hand[3].x; // simple thumb check
       const x = hand[0].x;
 
-      // 🖐 All fingers extended → STOP
-      if (index && middle && ring && pinky) return 'stop';
-
-      // ✊ Fist (no finger extended) → FORWARD
-      if (!index && !middle && !ring && !pinky) return 'forward';
-
-      // ✌️ Two fingers (index + middle) → BACKWARD
-      if (index && middle && !ring && !pinky) return 'backward';
-
-      // 👉 Left tilt
-      if (x < 0.35) return 'left';
-
-      // 👈 Right tilt
-      if (x > 0.65) return 'right';
-
-      return 'stop';
+      // 🖐 All open → stop
+      if (index && middle && ring && pinky) return "stop";
+      // ✊ Fist → forward
+      if (!index && !middle && !ring && !pinky) return "forward";
+      // ✌️ Two fingers → backward
+      if (index && middle && !ring && !pinky) return "backward";
+      // Move left/right
+      if (x < 0.35) return "left";
+      if (x > 0.65) return "right";
+      return "stop";
     }
 
-    const video = document.getElementById('video');
-    const hands = new Hands({ locateFile: f =>
-      `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`
+    const video = document.getElementById("video");
+    const hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${f}`
     });
     hands.setOptions({
       maxNumHands: 1,
@@ -81,13 +148,13 @@
 
     hands.onResults(res => {
       if (!res.multiHandLandmarks || res.multiHandLandmarks.length === 0) {
-        sendCmd('stop');
-        document.getElementById('debug').innerText = "Gesture: --";
+        sendCmd("stop");
+        debugEl.innerText = "Gesture: --";
         return;
       }
       const hand = res.multiHandLandmarks[0];
       const gesture = detectGesture(hand);
-      document.getElementById('debug').innerText = "Gesture: " + gesture;
+      debugEl.innerText = "Gesture: " + gesture;
       sendCmd(gesture);
     });
 
